@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forge Studios — CRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="app.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="crm()" x-init="init()" x-cloak>
+
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="logo" aria-label="Forge Studios">
+          <svg viewBox="0 0 60 80" width="22" height="28" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round">
+            <polygon points="30,4 56,40 30,76 4,40"/>
+            <polygon points="30,18 46,40 30,62 14,40" fill="currentColor" fill-opacity="0.15" stroke-width="2"/>
+          </svg>
+        </div>
+        <div>
+          <div class="name font-display">Forge Studios</div>
+          <div class="sub">Salgs-CRM</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" @click="prospect.open = true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          Finn bedrifter
+        </button>
+        <button class="btn btn-primary" @click="openNew()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Ny kunde
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="card stat">
+        <div class="stat-label">Totalt</div>
+        <div class="stat-value" x-text="customers.length"></div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Skal ringe</div>
+        <div class="stat-value" style="color: var(--blue)" x-text="countBy('lead')"></div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Ringt / Oppfølging</div>
+        <div class="stat-value" style="color: var(--accent-2)" x-text="countBy('called') + countBy('followup')"></div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Solgt</div>
+        <div class="stat-value" style="color: var(--green)" x-text="countBy('won')"></div>
+      </div>
+    </div>
+
+    <!-- Section header -->
+    <div class="section-header">
+      <h2 class="font-display">Kunder</h2>
+      <div class="actions">
+        <button class="btn btn-ghost" @click="bulkOpen = true">Lim inn flere</button>
+        <button class="btn btn-primary small" @click="openNew()">+ Ny kunde</button>
+      </div>
+    </div>
+
+    <!-- Quick add -->
+    <form class="quick-add" @submit.prevent="quickAdd()">
+      <input type="text" x-model="quick.name" placeholder="Navn..." required>
+      <input type="text" x-model="quick.company" placeholder="Bedrift">
+      <input type="tel" x-model="quick.phone" placeholder="Telefon">
+      <select x-model="quick.status">
+        <option value="lead">Skal ringe</option>
+        <option value="called">Ringt</option>
+        <option value="followup">Oppfølging</option>
+        <option value="won">Solgt</option>
+        <option value="lost">Tapt</option>
+      </select>
+      <button type="submit" class="btn btn-primary small">Legg til</button>
+    </form>
+
+    <!-- Toolbar -->
+    <div class="card toolbar">
+      <div class="search-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" x-model="search" placeholder="Søk kunde, telefon, e-post...">
+      </div>
+      <div class="filter-chips">
+        <template x-for="f in filters" :key="f.value">
+          <button @click="filter = f.value" :class="{active: filter === f.value}" class="chip-btn">
+            <span x-text="f.label"></span>
+            <span class="count" x-text="countBy(f.value)"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Customer table -->
+    <div class="card customer-table">
+      <div class="thead">
+        <span>Kunde</span>
+        <span>Telefon</span>
+        <span>Status</span>
+        <span>Verdi</span>
+        <span>Oppdatert</span>
+      </div>
+      <template x-for="c in filteredCustomers" :key="c.id">
+        <div class="trow" @click="openEdit(c)">
+          <div>
+            <div class="t-name" x-text="c.name"></div>
+            <div class="t-sub" x-text="c.company || ''"></div>
+          </div>
+          <div class="t-sub" x-text="c.phone || '—'"></div>
+          <div>
+            <span class="status-chip" :class="'s-' + c.status" x-text="statusLabel(c.status)"></span>
+          </div>
+          <div class="t-value" x-text="c.value ? 'kr ' + Number(c.value).toLocaleString('no-NO') : '—'"></div>
+          <div class="t-sub" x-text="formatDate(c.updated)"></div>
+        </div>
+      </template>
+      <div class="empty-row" x-show="filteredCustomers.length === 0">
+        Ingen kunder her — bruk feltene over for å legge til
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Edit modal -->
+  <div class="modal-overlay" x-show="modalOpen" @click.self="close()" @keydown.escape.window="close()">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 class="font-display" x-text="editing.id ? 'Rediger kunde' : 'Ny kunde'"></h2>
+          <div class="sub">Lagres automatisk i nettleseren</div>
+        </div>
+        <button class="close-btn" @click="close()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label><span>Navn *</span><input type="text" x-model="editing.name" placeholder="Ola Nordmann"></label>
+          <label><span>Bedrift</span><input type="text" x-model="editing.company" placeholder="Nordmann AS"></label>
+          <label><span>Telefon</span><input type="tel" x-model="editing.phone" placeholder="+47 ..."></label>
+          <label><span>E-post</span><input type="email" x-model="editing.email" placeholder="ola@nordmann.no"></label>
+          <label><span>Verdi (kr)</span><input type="number" x-model="editing.value" placeholder="0"></label>
+          <label><span>Neste kontakt</span><input type="date" x-model="editing.nextContact"></label>
+        </div>
+        <label class="full">
+          <span>Status</span>
+          <div class="status-picker">
+            <template x-for="opt in statusOptions" :key="opt.value">
+              <button type="button" @click="editing.status = opt.value"
+                      :class="{active: editing.status === opt.value}" class="status-opt"
+                      x-text="opt.label"></button>
+            </template>
+          </div>
+        </label>
+        <label class="full">
+          <span>Notater</span>
+          <textarea x-model="editing.notes" rows="6" placeholder="Hva ble sagt? Hva er neste steg?"></textarea>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button x-show="editing.id" class="btn-danger" @click="remove()">Slett kunde</button>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" @click="close()">Avbryt</button>
+        <button class="btn btn-primary" @click="save()" :disabled="!editing.name?.trim()">Lagre</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prospect modal: finn bedrifter uten nettside -->
+  <div class="modal-overlay" x-show="prospect.open" @click.self="prospect.open = false" @keydown.escape.window="prospect.open = false">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <div>
+          <h2 class="font-display">Finn bedrifter uten nettside</h2>
+          <div class="sub">Søker i Brønnøysundregistrene (Enhetsregisteret) — offisielle data</div>
+        </div>
+        <button class="close-btn" @click="prospect.open = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="prospect-filters">
+          <label>
+            <span>Yrke / bransje</span>
+            <select x-model="prospect.trade">
+              <template x-for="t in prospect.trades" :key="t.code">
+                <option :value="t.code" x-text="t.label"></option>
+              </template>
+            </select>
+          </label>
+          <label>
+            <span>Sted (kommune eller postnr)</span>
+            <input type="text" x-model="prospect.location" placeholder="f.eks. Oslo, Bergen, 0150" @keydown.enter="runProspect()">
+          </label>
+          <label>
+            <span>Maks treff</span>
+            <select x-model.number="prospect.limit">
+              <option :value="25">25</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" @click="runProspect()" :disabled="prospect.loading">
+            <span x-show="!prospect.loading">Søk</span>
+            <span x-show="prospect.loading">Søker...</span>
+          </button>
+        </div>
+
+        <div class="prospect-toggles">
+          <div class="toggles-label">Filtrer treff:</div>
+          <div class="toggles-row">
+            <label class="toggle" title="Vis bare bedrifter med ansatte eller som er MVA-registrert">
+              <input type="checkbox" x-model="prospect.onlyActive">
+              <span class="toggle-check" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span class="toggle-text">Kun aktive bedrifter</span>
+            </label>
+            <label class="toggle" title="Vis bare bedrifter registrert i MVA-registeret">
+              <input type="checkbox" x-model="prospect.onlyMva">
+              <span class="toggle-check" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span class="toggle-text">Kun MVA-registrerte</span>
+            </label>
+            <label class="toggle" title="Skjul enkeltpersonforetak (ENK) – ofte privatpersoner">
+              <input type="checkbox" x-model="prospect.hideEnk">
+              <span class="toggle-check" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span class="toggle-text">Skjul enkeltpersonforetak</span>
+            </label>
+            <label class="toggle" title="Slå sammen treff som ser ut som duplikater">
+              <input type="checkbox" x-model="prospect.dedupe">
+              <span class="toggle-check" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span class="toggle-text">Fjern dubletter</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="prospect-meta" x-show="prospect.searched">
+          <span x-text="prospect.results.length + ' treff uten nettside'"></span>
+          <span class="dot">•</span>
+          <span x-text="'av ' + prospect.totalScanned + ' bedrifter skannet'"></span>
+          <span class="dot" x-show="prospect.error">•</span>
+          <span class="err" x-show="prospect.error" x-text="prospect.error"></span>
+        </div>
+
+        <div class="prospect-results">
+          <template x-for="r in prospect.results" :key="r.orgnr">
+            <div class="prospect-row">
+              <div class="pr-main">
+                <div class="pr-name">
+                  <span x-text="r.navn"></span>
+                  <span class="pr-badges">
+                    <span class="badge b-form" x-text="r.orgform"></span>
+                    <span class="badge b-emp" x-show="r.ansatte > 0" x-text="r.ansatte + ' ans.'"></span>
+                    <span class="badge b-mva" x-show="r.mva">MVA</span>
+                    <span class="badge b-age" x-show="r.alder !== null" x-text="r.alder + ' år'"></span>
+                  </span>
+                </div>
+                <div class="pr-sub">
+                  <span x-text="r.orgnr"></span>
+                  <span x-show="r.adresse"> · </span>
+                  <span x-text="r.adresse"></span>
+                </div>
+                <div class="pr-sub" x-show="r.telefon || r.epost">
+                  <span x-show="r.telefon" x-text="'☎ ' + r.telefon"></span>
+                  <span x-show="r.telefon && r.epost"> · </span>
+                  <span x-show="r.epost" x-text="'✉ ' + r.epost"></span>
+                </div>
+              </div>
+              <div class="pr-actions">
+                <span class="status-chip s-won" x-show="r.added">Lagt til</span>
+                <button class="btn btn-primary small" x-show="!r.added" @click="addProspect(r)">+ Lead</button>
+              </div>
+            </div>
+          </template>
+          <div class="empty-row" x-show="prospect.searched && prospect.results.length === 0 && !prospect.loading">
+            Ingen treff uten nettside. Prøv et annet sted eller bransje.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" @click="prospect.open = false">Lukk</button>
+        <button class="btn btn-primary" @click="addAllProspects()" :disabled="prospect.results.filter(r => !r.added).length === 0">
+          Legg til alle som leads
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk import modal -->
+  <div class="modal-overlay" x-show="bulkOpen" @click.self="bulkOpen = false" @keydown.escape.window="bulkOpen = false">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 class="font-display">Lim inn flere kunder</h2>
+          <div class="sub">Importer en hel liste på en gang</div>
+        </div>
+        <button class="close-btn" @click="bulkOpen = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">
+          Én kunde per linje. Skill felt med komma eller tab:<br>
+          <code>Navn, Bedrift, Telefon, E-post</code><br>
+          Bare navn er påkrevd. Alle havner i "Skal ringe".
+        </p>
+        <textarea x-model="bulkText" rows="12" class="bulk-textarea"
+                  placeholder="Ola Nordmann, Nordmann AS, +47 911 22 333&#10;Kari Hansen, Hansen Frisør, +47 922 33 444&#10;Per Olsen"></textarea>
+      </div>
+      <div class="modal-footer">
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" @click="bulkOpen = false">Avbryt</button>
+        <button class="btn btn-primary" @click="bulkImport()">Importer</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
