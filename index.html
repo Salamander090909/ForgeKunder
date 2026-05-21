@@ -8,6 +8,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  window.SUPABASE_URL = 'https://sozshjjajhshvczyivkv.supabase.co';
+  window.SUPABASE_KEY = 'sb_publishable_t71YkzK1QrXzZl2kKHFuXA_aeKL5bQf';
+  window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
+</script>
 <script src="app.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -67,6 +73,8 @@
       <h2 class="font-display">Kunder</h2>
       <div class="actions">
         <button class="btn btn-ghost" @click="bulkOpen = true">Lim inn flere</button>
+        <button class="btn btn-ghost" @click="copyExport()" title="Kopier hele lista til utklippstavlen — lim inn i Docs">Kopier til Docs</button>
+        <button class="btn btn-ghost" @click="downloadExport()" title="Last ned som .txt-fil">Last ned .txt</button>
         <button class="btn btn-primary small" @click="openNew()">+ Ny kunde</button>
       </div>
     </div>
@@ -237,6 +245,13 @@
               </span>
               <span class="toggle-text">Skjul enkeltpersonforetak</span>
             </label>
+            <label class="toggle" title="Debug: vis alle skannede bedrifter med forklaring på hvorfor de ble klassifisert som med/uten nettside">
+              <input type="checkbox" x-model="prospect.debug">
+              <span class="toggle-check" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+              <span class="toggle-text">Debug (vis alle + årsak)</span>
+            </label>
             <label class="toggle" title="Slå sammen treff som ser ut som duplikater">
               <input type="checkbox" x-model="prospect.dedupe">
               <span class="toggle-check" aria-hidden="true">
@@ -251,8 +266,23 @@
           <span x-text="prospect.results.length + ' treff uten nettside'"></span>
           <span class="dot">•</span>
           <span x-text="'av ' + prospect.totalScanned + ' bedrifter skannet'"></span>
+          <span class="dot" x-show="prospect.loading && prospect.toCheck > 0">•</span>
+          <span x-show="prospect.loading && prospect.toCheck > 0" x-text="'sjekker nettsider ' + prospect.checked + '/' + prospect.toCheck"></span>
           <span class="dot" x-show="prospect.error">•</span>
           <span class="err" x-show="prospect.error" x-text="prospect.error"></span>
+        </div>
+
+        <div x-show="prospect.debug && prospect.funnel" style="font-family: monospace; font-size: 12px; background: rgba(0,0,0,0.04); border-radius: 8px; padding: 12px; margin-bottom: 12px; white-space: pre-line;">
+          <div style="font-weight: 700; margin-bottom: 6px;">Filter-trakt</div>
+          <div x-text="'Brreg returnerte:       ' + (prospect.funnel?.brreg ?? '-')"></div>
+          <div x-text="'Etter status-filter:    ' + (prospect.funnel?.afterStatus ?? '-') + '   (fjerner slettede/konkurs)'"></div>
+          <div x-text="'Etter kun aktive:       ' + (prospect.funnel?.afterActive ?? '-') + '   (' + (prospect.onlyActive ? 'på' : 'av') + ')'"></div>
+          <div x-text="'Etter kun MVA:          ' + (prospect.funnel?.afterMva ?? '-') + '   (' + (prospect.onlyMva ? 'på' : 'av') + ')'"></div>
+          <div x-text="'Etter skjul ENK:        ' + (prospect.funnel?.afterEnk ?? '-') + '   (' + (prospect.hideEnk ? 'på' : 'av') + ')'"></div>
+          <div x-text="'Etter dedupe:           ' + (prospect.funnel?.afterDedupe ?? '-') + '   (' + (prospect.dedupe ? 'på' : 'av') + ')'"></div>
+          <div x-text="'Sjekket nettside:       ' + (prospect.funnel?.checked ?? '-')"></div>
+          <div x-text="'  → har nettside:       ' + (prospect.funnel?.hasWebsite ?? '-')"></div>
+          <div x-text="'  → ingen nettside:     ' + (prospect.funnel?.noWebsite ?? '-')"></div>
         </div>
 
         <div class="prospect-results">
@@ -260,7 +290,7 @@
             <div class="prospect-row">
               <div class="pr-main">
                 <div class="pr-name">
-                  <span x-text="r.navn"></span>
+                  <a :href="'https://www.google.com/search?q=' + encodeURIComponent(r.navn)" target="_blank" rel="noopener" x-text="r.navn" @click.stop></a>
                   <span class="pr-badges">
                     <span class="badge b-form" x-text="r.orgform"></span>
                     <span class="badge b-emp" x-show="r.ansatte > 0" x-text="r.ansatte + ' ans.'"></span>
@@ -278,8 +308,13 @@
                   <span x-show="r.telefon && r.epost"> · </span>
                   <span x-show="r.epost" x-text="'✉ ' + r.epost"></span>
                 </div>
+                <div class="pr-sub" x-show="prospect.debug && r.check" style="font-family: monospace; font-size: 11px; opacity: 0.8;">
+                  <span x-show="r.check && r.check.has" x-text="'HAR NETTSIDE → ' + (r.check && r.check.domain) + ' (' + (r.check && r.check.source) + ')'"></span>
+                  <span x-show="r.check && !r.check.has" x-text="'INGEN NETTSIDE — prøvde: ' + (r.check && r.check.tried.map(t => t.domain).join(', ') || 'ingen kandidater')"></span>
+                </div>
               </div>
               <div class="pr-actions">
+                <span class="status-chip" :class="r.check && r.check.has ? 's-lost' : 's-won'" x-show="prospect.debug && r.check" x-text="r.check && r.check.has ? 'Har nettside' : 'Ingen nettside'"></span>
                 <span class="status-chip s-won" x-show="r.added">Lagt til</span>
                 <button class="btn btn-primary small" x-show="!r.added" @click="addProspect(r)">+ Lead</button>
               </div>

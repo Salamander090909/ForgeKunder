@@ -20,29 +20,37 @@ window.crm = function crm() {
       limit: 50,
       results: [],
       totalScanned: 0,
-      onlyActive: true,
+      checking: 0,
+      checked: 0,
+      toCheck: 0,
+      funnel: null,
+      onlyActive: false,
       onlyMva: false,
       hideEnk: false,
       dedupe: true,
+      debug: false,
       trades: [
-        { code: '43.22', label: 'Rørlegger (VVS)' },
-        { code: '43.21', label: 'Elektriker' },
-        { code: '43.32', label: 'Snekker / innredning' },
-        { code: '43.34', label: 'Maler / glassarbeid' },
-        { code: '43.31', label: 'Murer / pussing' },
-        { code: '43.91', label: 'Taktekker' },
-        { code: '43.99', label: 'Annet bygg / spesialisert' },
-        { code: '41.20', label: 'Bygg av bolig / yrkesbygg' },
-        { code: '81.30', label: 'Hage / anleggsgartner' },
-        { code: '96.02', label: 'Frisør / skjønnhetspleie' },
-        { code: '96.04', label: 'Hud, massasje, velvære' },
-        { code: '45.20', label: 'Bilverksted' },
-        { code: '95.22', label: 'Reparasjon hvitevarer' },
-        { code: '49.41', label: 'Transport / lastebil' },
-        { code: '49.32', label: 'Drosje' },
-        { code: '56.10', label: 'Restaurant / kafé' },
-        { code: '74.20', label: 'Fotograf' },
-        { code: '93.13', label: 'Treningssenter' },
+        { code: '43.221', label: 'Rørlegger (VVS)' },
+        { code: '43.210', label: 'Elektriker' },
+        { code: '43.320', label: 'Snekker / innredning' },
+        { code: '43.340', label: 'Maler / glassarbeid' },
+        { code: '43.310', label: 'Murer / pussing' },
+        { code: '43.910', label: 'Taktekker' },
+        { code: '43.990', label: 'Annet bygg / spesialisert' },
+        { code: '41.000', label: 'Bygg av bolig / yrkesbygg' },
+        { code: '81.300', label: 'Hage / anleggsgartner' },
+        { code: '96.210', label: 'Frisør' },
+        { code: '96.220', label: 'Skjønnhetspleie' },
+        { code: '96.230', label: 'Hud, massasje, spa' },
+        { code: '95.310', label: 'Bilverksted' },
+        { code: '95.220', label: 'Reparasjon hvitevarer' },
+        { code: '49.410', label: 'Transport / lastebil' },
+        { code: '49.320', label: 'Drosje' },
+        { code: '56.110', label: 'Restaurant' },
+        { code: '56.300', label: 'Bar / pub' },
+        { code: '56.210', label: 'Catering' },
+        { code: '74.200', label: 'Fotograf' },
+        { code: '93.130', label: 'Treningssenter' },
       ],
     },
 
@@ -62,21 +70,49 @@ window.crm = function crm() {
       { value: 'lost',     label: 'Tapt' },
     ],
 
-    init() {
-      const saved = localStorage.getItem('forge-crm-v2');
-      if (saved) {
-        try { this.customers = JSON.parse(saved); } catch(e) {}
-      }
-      if (this.customers.length === 0) {
-        this.customers = [
-          { id: this.uid(), name: 'Kari Hansen', company: 'Hansen Frisør', phone: '+47 911 22 333', email: 'kari@hansenfrisor.no', status: 'called', value: 15000, notes: 'Veldig interessert. Sender tilbud i morgen.', created: Date.now()-86400000*3, updated: Date.now()-86400000 },
-          { id: this.uid(), name: 'Per Olsen', company: 'Olsen Bygg AS', phone: '+47 922 33 444', email: '', status: 'lead', value: 0, notes: 'Tips fra Lars. Ringe mandag.', created: Date.now()-86400000*2, updated: Date.now()-86400000*2 },
-          { id: this.uid(), name: 'Ingrid Berg', company: 'Berg Tannlege', phone: '+47 933 44 555', email: 'post@bergtannlege.no', status: 'won', value: 25000, notes: 'Signert kontrakt.', created: Date.now()-86400000*14, updated: Date.now()-86400000*5 },
-        ];
-        this.persist();
-      }
+    async init() {
+      await this.loadFromCloud();
+      this.subscribeRealtime();
       this.tick();
       setInterval(() => this.tick(), 1000);
+    },
+
+    async loadFromCloud() {
+      try {
+        const { data, error } = await window.sb.from('customers').select('data');
+        if (error) throw error;
+        this.customers = (data || []).map(r => r.data);
+      } catch (e) {
+        console.error('Kunne ikke laste fra Supabase:', e);
+      }
+    },
+
+    subscribeRealtime() {
+      window.sb.channel('customers-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, payload => {
+          if (payload.eventType === 'DELETE') {
+            this.customers = this.customers.filter(c => c.id !== payload.old.id);
+          } else {
+            const row = payload.new.data;
+            const i = this.customers.findIndex(c => c.id === row.id);
+            if (i >= 0) this.customers[i] = row; else this.customers.push(row);
+          }
+        })
+        .subscribe();
+    },
+
+    async saveCustomer(c) {
+      try {
+        const { error } = await window.sb.from('customers').upsert({ id: c.id, data: c, updated_at: new Date().toISOString() });
+        if (error) throw error;
+      } catch (e) { console.error('Lagring feilet:', e); }
+    },
+
+    async deleteCustomer(id) {
+      try {
+        const { error } = await window.sb.from('customers').delete().eq('id', id);
+        if (error) throw error;
+      } catch (e) { console.error('Sletting feilet:', e); }
     },
 
     tick() {
@@ -84,7 +120,14 @@ window.crm = function crm() {
       this.clock = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
     },
 
-    persist() { localStorage.setItem('forge-crm-v2', JSON.stringify(this.customers)); },
+    async persist() {
+      try {
+        if (!this.customers.length) return;
+        const rows = this.customers.map(c => ({ id: c.id, data: c, updated_at: new Date().toISOString() }));
+        const { error } = await window.sb.from('customers').upsert(rows);
+        if (error) throw error;
+      } catch (e) { console.error('Lagring feilet:', e); }
+    },
     uid() { return Math.random().toString(36).slice(2, 11); },
 
     get stats() {
@@ -210,11 +253,117 @@ window.crm = function crm() {
       if (added > 0) alert(added + ' kunder lagt til!');
     },
 
+    domainCandidates(navn) {
+      let s = (navn || '').toLowerCase()
+        .replace(/æ/g, 'ae').replace(/ø/g, 'o').replace(/å/g, 'a')
+        .replace(/&/g, ' og ')
+        .replace(/[.,'"`/\\()!?]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const legal = new Set(['as','asa','ans','da','nuf','sa','enk','bedrift']);
+      const connector = new Set(['og','the','of','for','co','i','på','pa']);
+      const trade = new Set(['frisor','bygg','transport','eiendom','holding','invest','consulting','design','gruppen','group','salong','klinikk','studio','service','tjenester','as','bil','elektro','elektriker','rorlegger','vvs','maler','snekker','taktekker','anlegg','catering','restaurant','bar','pub','kafe','cafe','fotograf','trening','hud','spa','massasje','negl','barber']);
+      const allWords = s.split(' ').filter(w => w && !legal.has(w));
+      if (allWords.length === 0) return [];
+      const noConn = allWords.filter(w => !connector.has(w));
+      const brand = noConn.filter(w => !trade.has(w));
+      const brandWithConn = allWords.filter(w => !trade.has(w));
+
+      const bases = new Set();
+      const add = (parts) => {
+        if (!parts || parts.length === 0) return;
+        bases.add(parts.join(''));
+        if (parts.length > 1) bases.add(parts.join('-'));
+      };
+      add(allWords);
+      add(noConn);
+      add(brand);
+      add(brandWithConn);
+      add(brand.slice(0, 2));
+      add(brandWithConn.slice(0, 3));
+      add(noConn.slice(0, 2));
+
+      const tlds = ['.no', '.com', '.net'];
+      const variants = new Set();
+      for (const base of bases) {
+        if (!base) continue;
+        if (!/^[a-z0-9-]+$/.test(base)) continue;
+        if (base.length < 4) continue;
+        const isSingleShortWord = brand.length === 1 && base === brand[0] && base.length < 6;
+        if (isSingleShortWord) continue;
+        for (const tld of tlds) {
+          variants.add(base + tld);
+        }
+      }
+      return Array.from(variants).slice(0, 12);
+    },
+
+    async verifyHttp(domain) {
+      const tryUrl = async (url) => {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 4000);
+          await fetch(url, { method: 'GET', mode: 'no-cors', signal: ctrl.signal, redirect: 'follow' });
+          clearTimeout(t);
+          return true;
+        } catch (e) { return false; }
+      };
+      if (await tryUrl('https://' + domain + '/')) return true;
+      if (await tryUrl('https://www.' + domain + '/')) return true;
+      return false;
+    },
+
+    websiteFromEmail(epost) {
+      if (!epost) return null;
+      const m = String(epost).toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})$/);
+      if (!m) return null;
+      const domain = m[1];
+      const generic = new Set(['gmail.com','hotmail.com','hotmail.no','outlook.com','yahoo.com','yahoo.no','live.no','live.com','icloud.com','online.no','broadpark.no','getmail.no','msn.com','me.com']);
+      if (generic.has(domain)) return null;
+      return domain;
+    },
+
+    async dohHas(domain) {
+      try {
+        const r = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(domain) + '&type=A', {
+          headers: { 'Accept': 'application/dns-json' },
+        });
+        if (!r.ok) return false;
+        const j = await r.json();
+        return !!(j.Answer && j.Answer.some(a => a.type === 1));
+      } catch (e) { return false; }
+    },
+
+    async checkHasWebsite(r) {
+      const tried = [];
+      const emailDomain = this.websiteFromEmail(r.epost);
+      if (emailDomain) {
+        tried.push({ domain: emailDomain, source: 'email', hit: true });
+        return { has: true, domain: emailDomain, source: 'email', tried };
+      }
+      const cands = this.domainCandidates(r.navn);
+      for (const d of cands) {
+        const dnsHit = await this.dohHas(d);
+        if (!dnsHit) {
+          tried.push({ domain: d, source: 'dns', hit: false });
+          continue;
+        }
+        const httpHit = await this.verifyHttp(d);
+        tried.push({ domain: d, source: 'dns+http', hit: httpHit });
+        if (httpHit) return { has: true, domain: d, source: 'dns+http', tried };
+      }
+      return { has: false, tried };
+    },
+
     async runProspect() {
       this.prospect.loading = true;
       this.prospect.error = '';
       this.prospect.results = [];
       this.prospect.totalScanned = 0;
+      this.prospect.checking = 0;
+      this.prospect.checked = 0;
+      this.prospect.toCheck = 0;
+      this.prospect.funnel = null;
       this.prospect.searched = true;
       try {
         const params = new URLSearchParams();
@@ -234,12 +383,13 @@ window.crm = function crm() {
         const data = await res.json();
         const list = (data._embedded && data._embedded.enheter) || [];
         this.prospect.totalScanned = list.length;
+        const funnel = { brreg: list.length };
 
         const existing = new Set(this.customers.map(c => (c.orgnr || '').toString()));
         let mapped = list
-          .filter(e => !e.slettedato && !e.konkurs && !e.underAvvikling && !e.underTvangsavviklingEllerTvangsopplosning)
-          .filter(e => !e.hjemmeside || !e.hjemmeside.trim())
-          .map(e => {
+          .filter(e => !e.slettedato && !e.konkurs && !e.underAvvikling && !e.underTvangsavviklingEllerTvangsopplosning);
+        funnel.afterStatus = mapped.length;
+        mapped = mapped.map(e => {
             const a = e.forretningsadresse || {};
             const adresse = [
               (a.adresse || []).join(' '),
@@ -277,14 +427,24 @@ window.crm = function crm() {
           });
 
         if (this.prospect.onlyActive) {
-          mapped = mapped.filter(r => r.ansatte >= 1 || r.mva);
+          mapped = mapped.filter(r =>
+            r.ansatte >= 1 ||
+            r.mva ||
+            r.telefon ||
+            r.epost ||
+            r.orgform === 'AS' ||
+            r.orgform === 'ASA'
+          );
         }
+        funnel.afterActive = mapped.length;
         if (this.prospect.onlyMva) {
           mapped = mapped.filter(r => r.mva);
         }
+        funnel.afterMva = mapped.length;
         if (this.prospect.hideEnk) {
           mapped = mapped.filter(r => r.orgform !== 'ENK');
         }
+        funnel.afterEnk = mapped.length;
 
         if (this.prospect.dedupe) {
           const seen = new Map();
@@ -305,9 +465,34 @@ window.crm = function crm() {
           }
           mapped = Array.from(new Set(Array.from(seen.values())));
         }
+        funnel.afterDedupe = mapped.length;
 
         mapped.sort((a, b) => b.score - a.score);
-        this.prospect.results = mapped.slice(0, this.prospect.limit);
+        this.prospect.funnel = funnel;
+
+        const candidates = mapped.slice(0, Math.min(mapped.length, this.prospect.limit * 3));
+        this.prospect.toCheck = candidates.length;
+        this.prospect.checked = 0;
+        const concurrency = 8;
+        let idx = 0;
+        const worker = async () => {
+          while (idx < candidates.length && this.prospect.results.length < this.prospect.limit) {
+            const i = idx++;
+            const r = candidates[i];
+            const res = await this.checkHasWebsite(r);
+            this.prospect.checked++;
+            r.check = res;
+            if (!res.has || this.prospect.debug) {
+              this.prospect.results.push(r);
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: concurrency }, worker));
+        funnel.checked = this.prospect.checked;
+        funnel.hasWebsite = candidates.filter(r => r.check && r.check.has).length;
+        funnel.noWebsite = candidates.filter(r => r.check && !r.check.has).length;
+        this.prospect.funnel = { ...funnel };
+        this.prospect.results = this.prospect.results.slice(0, this.prospect.limit);
       } catch (err) {
         this.prospect.error = 'Feil: ' + err.message;
       } finally {
@@ -356,10 +541,73 @@ window.crm = function crm() {
       this.persist();
       this.close();
     },
-    remove() {
+    exportText() {
+      const sorted = [...this.customers].sort((a,b) => (b.updated||0) - (a.updated||0));
+      const dato = new Date().toLocaleDateString('no-NO', { day:'2-digit', month:'long', year:'numeric' });
+      const lines = [];
+      lines.push('FORGE STUDIOS — KUNDELISTE');
+      lines.push('Eksportert ' + dato + ' · ' + sorted.length + ' kunder');
+      lines.push('');
+      const groups = {};
+      sorted.forEach(c => { (groups[c.status] = groups[c.status] || []).push(c); });
+      for (const opt of this.statusOptions) {
+        const list = groups[opt.value];
+        if (!list || !list.length) continue;
+        lines.push('=== ' + opt.label.toUpperCase() + ' (' + list.length + ') ===');
+        lines.push('');
+        list.forEach(c => {
+          lines.push(c.name + (c.company ? ' — ' + c.company : ''));
+          if (c.phone) lines.push('  Telefon: ' + c.phone);
+          if (c.email) lines.push('  E-post: ' + c.email);
+          if (c.orgnr) lines.push('  Org.nr: ' + c.orgnr);
+          if (Number(c.value) > 0) lines.push('  Verdi: kr ' + Number(c.value).toLocaleString('no-NO'));
+          if (c.nextContact) lines.push('  Neste kontakt: ' + c.nextContact);
+          if (c.created) lines.push('  Opprettet: ' + new Date(c.created).toLocaleDateString('no-NO'));
+          if (c.updated) lines.push('  Oppdatert: ' + new Date(c.updated).toLocaleDateString('no-NO'));
+          if (c.notes && c.notes.trim()) {
+            lines.push('  Notater:');
+            c.notes.split('\n').forEach(n => lines.push('    ' + n));
+          }
+          lines.push('');
+        });
+      }
+      return lines.join('\n');
+    },
+
+    async copyExport() {
+      const text = this.exportText();
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Kopiert! ' + this.customers.length + ' kunder ligger nå på utklippstavlen — lim inn i Docs med Ctrl+V.');
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert('Kopiert! Lim inn i Docs med Ctrl+V.');
+      }
+    },
+
+    downloadExport() {
+      const text = this.exportText();
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'forge-crm-' + new Date().toISOString().slice(0,10) + '.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+
+    async remove() {
       if (!confirm('Slette ' + this.editing.name + '?')) return;
-      this.customers = this.customers.filter(c => c.id !== this.editing.id);
-      this.persist();
+      const id = this.editing.id;
+      this.customers = this.customers.filter(c => c.id !== id);
+      await this.deleteCustomer(id);
       this.close();
     },
   };
