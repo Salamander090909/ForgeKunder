@@ -34,11 +34,11 @@
         </div>
       </div>
       <div class="header-actions">
-        <button class="btn btn-ghost" @click="prospect.open = true">
+        <button class="btn btn-ghost" @click="prospect.open = true" title="Søk i Brønnøysund etter bedrifter uten nettside">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           Finn bedrifter
         </button>
-        <button class="btn btn-primary" @click="openNew()">
+        <button class="btn btn-primary" @click="openNew()" title="Opprett en ny kunde manuelt">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           Ny kunde
         </button>
@@ -72,6 +72,13 @@
     <div class="section-header">
       <h2 class="font-display">Kunder</h2>
       <div class="actions">
+        <div class="view-switch" role="tablist" aria-label="Visning">
+          <button class="vs-btn" :class="{active: view === 'list'}" @click="view = 'list'" role="tab" :aria-selected="view === 'list'">Liste</button>
+          <button class="vs-btn" :class="{active: view === 'kanban'}" @click="view = 'kanban'" role="tab" :aria-selected="view === 'kanban'">Tavle</button>
+          <button class="vs-btn" :class="{active: view === 'trash'}" @click="view = 'trash'" role="tab" :aria-selected="view === 'trash'" :title="'Papirkurv (' + trashedCustomers.length + ')'">
+            Papirkurv <span class="vs-count" x-show="trashedCustomers.length" x-text="trashedCustomers.length"></span>
+          </button>
+        </div>
         <button class="btn btn-ghost" @click="bulkOpen = true">Lim inn flere</button>
         <button class="btn btn-ghost" @click="copyExport()" title="Kopier hele lista til utklippstavlen — lim inn i Docs">Kopier til Docs</button>
         <button class="btn btn-ghost" @click="downloadExport()" title="Last ned som .txt-fil">Last ned .txt</button>
@@ -80,7 +87,7 @@
     </div>
 
     <!-- Quick add -->
-    <form class="quick-add" @submit.prevent="quickAdd()">
+    <form class="quick-add" @submit.prevent="quickAdd()" x-show="view !== 'trash'">
       <input type="text" x-model="quick.name" placeholder="Navn..." required>
       <input type="text" x-model="quick.company" placeholder="Bedrift">
       <input type="tel" x-model="quick.phone" placeholder="Telefon">
@@ -95,10 +102,10 @@
     </form>
 
     <!-- Toolbar -->
-    <div class="card toolbar">
+    <div class="card toolbar" x-show="view !== 'trash'">
       <div class="search-wrap">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="text" x-model="search" placeholder="Søk kunde, telefon, e-post...">
+        <input type="text" x-model="search" placeholder="Søk navn, telefon, e-post, notater, tags...">
       </div>
       <div class="filter-chips">
         <template x-for="f in filters" :key="f.value">
@@ -110,31 +117,126 @@
       </div>
     </div>
 
-    <!-- Customer table -->
-    <div class="card customer-table">
+    <!-- Tag filter -->
+    <div class="tag-filter-row" x-show="view !== 'trash' && allTags.length">
+      <span class="tf-label">Tags:</span>
+      <button class="tag-chip" :class="{active: tagFilter === ''}" @click="tagFilter = ''">Alle</button>
+      <template x-for="t in allTags" :key="t">
+        <button class="tag-chip" :class="{active: tagFilter === t}" @click="tagFilter = tagFilter === t ? '' : t" x-text="t"></button>
+      </template>
+    </div>
+
+    <!-- Customer table (list view) -->
+    <div class="card customer-table" x-show="view === 'list'">
       <div class="thead">
         <span>Kunde</span>
         <span>Telefon</span>
+        <span title="Hvem skal ringe — S = Sander, E = Erik">Ansvarlig</span>
         <span>Status</span>
         <span>Verdi</span>
         <span>Oppdatert</span>
+        <span></span>
       </div>
       <template x-for="c in filteredCustomers" :key="c.id">
-        <div class="trow" @click="openEdit(c)">
+        <div class="trow" :class="{'needs-followup': needsFollowup(c)}" @click="openEdit(c)">
           <div>
-            <div class="t-name" x-text="c.name"></div>
+            <div class="t-name">
+              <span x-text="c.name"></span>
+              <span class="followup-dot" x-show="needsFollowup(c)" title="Trenger oppfølging">●</span>
+            </div>
             <div class="t-sub" x-text="c.company || ''"></div>
+            <div class="row-tags" x-show="(c.tags || []).length" @click.stop>
+              <template x-for="t in (c.tags || [])" :key="t">
+                <span class="row-tag" x-text="t"></span>
+              </template>
+            </div>
           </div>
-          <div class="t-sub" x-text="c.phone || '—'"></div>
+          <div class="t-sub">
+            <template x-if="c.phone">
+              <a :href="telLink(c.phone)" @click.stop x-text="c.phone" class="link-inline"></a>
+            </template>
+            <template x-if="!c.phone"><span>—</span></template>
+          </div>
+          <div class="caller-cell" @click.stop>
+            <button type="button" class="caller-btn" :class="{active: c.caller === 's'}"
+                    @click="setCaller(c, 's')" title="Sander ringer denne">S</button>
+            <button type="button" class="caller-btn" :class="{active: c.caller === 'e'}"
+                    @click="setCaller(c, 'e')" title="Eric ringer denne">E</button>
+          </div>
           <div>
             <span class="status-chip" :class="'s-' + c.status" x-text="statusLabel(c.status)"></span>
           </div>
           <div class="t-value" x-text="c.value ? 'kr ' + Number(c.value).toLocaleString('no-NO') : '—'"></div>
           <div class="t-sub" x-text="formatDate(c.updated)"></div>
+          <div class="row-actions" @click.stop>
+            <button type="button" class="icon-btn icon-btn-danger"
+                    @click="quickDelete(c)" :title="'Slett ' + c.name" aria-label="Slett kunde">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
         </div>
       </template>
       <div class="empty-row" x-show="filteredCustomers.length === 0">
         Ingen kunder her — bruk feltene over for å legge til
+      </div>
+    </div>
+
+    <!-- Kanban view -->
+    <div class="kanban" x-show="view === 'kanban'">
+      <template x-for="col in kanbanCols" :key="col.value">
+        <div class="kanban-col" @dragover="onDragOver($event)" @drop="onDrop(col.value)">
+          <div class="kanban-head">
+            <span class="status-chip" :class="'s-' + col.value" x-text="col.label"></span>
+            <span class="kanban-count" x-text="customersByStatus(col.value).length"></span>
+          </div>
+          <div class="kanban-list">
+            <template x-for="c in customersByStatus(col.value)" :key="c.id">
+              <div class="kanban-card" :class="{'needs-followup': needsFollowup(c)}"
+                   draggable="true" @dragstart="onDragStart(c, $event)" @click="openEdit(c)">
+                <div class="kc-name">
+                  <span x-text="c.name"></span>
+                  <span class="followup-dot" x-show="needsFollowup(c)" title="Trenger oppfølging">●</span>
+                </div>
+                <div class="kc-sub" x-show="c.company" x-text="c.company"></div>
+                <div class="kc-sub" x-show="c.phone">
+                  <a :href="telLink(c.phone)" @click.stop x-text="c.phone" class="link-inline"></a>
+                </div>
+                <div class="kc-meta">
+                  <span x-show="c.value" x-text="'kr ' + Number(c.value).toLocaleString('no-NO')"></span>
+                  <span class="kc-date" x-text="formatDate(c.updated)"></span>
+                </div>
+                <div class="row-tags" x-show="(c.tags || []).length">
+                  <template x-for="t in (c.tags || [])" :key="t">
+                    <span class="row-tag" x-text="t"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div class="kanban-empty" x-show="customersByStatus(col.value).length === 0">Tomt</div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Trash view -->
+    <div class="card customer-table" x-show="view === 'trash'">
+      <div class="trash-hint">
+        Kunder slettes permanent etter 30 dager. Trykk Gjenopprett for å hente tilbake.
+      </div>
+      <template x-for="c in trashedCustomers" :key="c.id">
+        <div class="trow trash-row">
+          <div>
+            <div class="t-name" x-text="c.name"></div>
+            <div class="t-sub" x-text="(c.company || '') + ' · slettet ' + formatDate(c.deletedAt)"></div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-ghost small" @click="restoreCustomer(c)">Gjenopprett</button>
+            <button class="btn-danger" @click="purgeCustomer(c)">Slett nå</button>
+          </div>
+        </div>
+      </template>
+      <div class="empty-row" x-show="trashedCustomers.length === 0">
+        Papirkurv er tom
       </div>
     </div>
 
@@ -154,8 +256,18 @@
         <div class="form-grid">
           <label><span>Navn *</span><input type="text" x-model="editing.name" placeholder="Ola Nordmann"></label>
           <label><span>Bedrift</span><input type="text" x-model="editing.company" placeholder="Nordmann AS"></label>
-          <label><span>Telefon</span><input type="tel" x-model="editing.phone" placeholder="+47 ..."></label>
-          <label><span>E-post</span><input type="email" x-model="editing.email" placeholder="ola@nordmann.no"></label>
+          <label>
+            <span>Telefon
+              <a x-show="editing.phone" :href="telLink(editing.phone)" class="inline-link" @click.stop>(ring)</a>
+            </span>
+            <input type="tel" x-model="editing.phone" placeholder="+47 ...">
+          </label>
+          <label>
+            <span>E-post
+              <a x-show="editing.email" :href="'mailto:' + editing.email" class="inline-link" @click.stop>(send)</a>
+            </span>
+            <input type="email" x-model="editing.email" placeholder="ola@nordmann.no">
+          </label>
           <label><span>Verdi (kr)</span><input type="number" x-model="editing.value" placeholder="0"></label>
           <label><span>Neste kontakt</span><input type="date" x-model="editing.nextContact"></label>
         </div>
@@ -170,9 +282,48 @@
           </div>
         </label>
         <label class="full">
-          <span>Notater</span>
-          <textarea x-model="editing.notes" rows="6" placeholder="Hva ble sagt? Hva er neste steg?"></textarea>
+          <span>Tags</span>
+          <div class="tag-edit">
+            <div class="tag-edit-chips">
+              <template x-for="t in (editing.tags || [])" :key="t">
+                <span class="tag-chip active">
+                  <span x-text="t"></span>
+                  <button type="button" class="tag-x" @click="removeTag(t)" aria-label="Fjern tag">✕</button>
+                </span>
+              </template>
+            </div>
+            <div class="tag-edit-input">
+              <input type="text" x-model="newTag" placeholder="ny tag..." @keydown.enter.prevent="addTag()" @keydown.,.prevent="addTag()">
+              <button type="button" class="btn btn-ghost small" @click="addTag()">+ Tag</button>
+            </div>
+          </div>
         </label>
+        <label class="full">
+          <span>Notater (fritekst)</span>
+          <textarea x-model="editing.notes" rows="4" placeholder="Generell info om kunden..."></textarea>
+        </label>
+        <div class="full activity-section">
+          <span class="section-label">Aktivitet</span>
+          <div class="activity-add">
+            <input type="text" x-model="newNote" placeholder="Skriv et notat — f.eks. 'Ringt, ikke svar'" @keydown.enter.prevent="addNote()">
+            <button type="button" class="btn btn-primary small" @click="addNote()" :disabled="!newNote.trim()">+ Logg</button>
+          </div>
+          <div class="activity-log" x-show="(editing.activity || []).length">
+            <template x-for="(a, i) in [...(editing.activity || [])].reverse()" :key="i">
+              <div class="activity-item" :class="'a-' + (a.type || 'note')">
+                <div class="a-dot"></div>
+                <div class="a-body">
+                  <div class="a-text" x-text="a.text"></div>
+                  <div class="a-time" x-text="formatTime(a.ts)"></div>
+                </div>
+                <button type="button" class="a-del" @click="removeActivity((editing.activity || []).length - 1 - i)" title="Fjern" aria-label="Fjern aktivitet">✕</button>
+              </div>
+            </template>
+          </div>
+          <div class="activity-empty" x-show="!(editing.activity || []).length">
+            Ingen aktivitet logget enda
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button x-show="editing.id" class="btn-danger" @click="remove()">Slett kunde</button>

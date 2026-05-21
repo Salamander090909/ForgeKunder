@@ -3,12 +3,17 @@ window.crm = function crm() {
     customers: [],
     search: '',
     filter: 'all',
+    tagFilter: '',
+    view: 'list',
     modalOpen: false,
     bulkOpen: false,
     bulkText: '',
     editing: {},
+    newNote: '',
+    newTag: '',
     quick: { name: '', company: '', phone: '', status: 'lead' },
     clock: '',
+    draggingId: null,
 
     prospect: {
       open: false,
@@ -63,6 +68,14 @@ window.crm = function crm() {
     ],
     filters: [
       { value: 'all',      label: 'Alle' },
+      { value: 'needs',    label: 'Trenger oppfølging' },
+      { value: 'lead',     label: 'Skal ringe' },
+      { value: 'called',   label: 'Ringt' },
+      { value: 'followup', label: 'Oppfølging' },
+      { value: 'won',      label: 'Solgt' },
+      { value: 'lost',     label: 'Tapt' },
+    ],
+    kanbanCols: [
       { value: 'lead',     label: 'Skal ringe' },
       { value: 'called',   label: 'Ringt' },
       { value: 'followup', label: 'Oppfølging' },
@@ -176,17 +189,131 @@ window.crm = function crm() {
       return Math.round(won / closed * 100);
     },
 
+    get activeCustomers() {
+      return this.customers.filter(c => !c.deletedAt);
+    },
+
+    get trashedCustomers() {
+      const cutoff = Date.now() - 86400000 * 30;
+      return this.customers.filter(c => c.deletedAt && c.deletedAt >= cutoff)
+        .sort((a,b) => b.deletedAt - a.deletedAt);
+    },
+
+    get allTags() {
+      const set = new Set();
+      this.activeCustomers.forEach(c => (c.tags || []).forEach(t => set.add(t)));
+      return Array.from(set).sort();
+    },
+
+    needsFollowup(c) {
+      if (c.status === 'won' || c.status === 'lost') return false;
+      const today = new Date(); today.setHours(0,0,0,0);
+      if (c.nextContact) {
+        const next = new Date(c.nextContact);
+        if (next.getTime() <= today.getTime()) return true;
+      }
+      const silent = Date.now() - (c.updated || 0) > 86400000 * 14;
+      if (silent && c.status === 'lead') return true;
+      return false;
+    },
+
     countBy(s) {
-      if (s === 'all') return this.customers.length;
-      return this.customers.filter(c => c.status === s).length;
+      const base = this.activeCustomers;
+      if (s === 'all') return base.length;
+      if (s === 'needs') return base.filter(c => this.needsFollowup(c)).length;
+      return base.filter(c => c.status === s).length;
+    },
+
+    matchesSearch(c, q) {
+      if (!q) return true;
+      const hay = (c.name + ' ' + (c.company||'') + ' ' + (c.phone||'') + ' '
+        + (c.email||'') + ' ' + (c.notes||'') + ' ' + ((c.tags||[]).join(' '))).toLowerCase();
+      return hay.includes(q);
     },
 
     get filteredCustomers() {
       const q = this.search.toLowerCase().trim();
-      return this.customers
-        .filter(c => this.filter === 'all' || c.status === this.filter)
-        .filter(c => !q || (c.name + ' ' + (c.company||'') + ' ' + (c.phone||'') + ' ' + (c.email||'')).toLowerCase().includes(q))
+      const tag = this.tagFilter;
+      return this.activeCustomers
+        .filter(c => {
+          if (this.filter === 'all') return true;
+          if (this.filter === 'needs') return this.needsFollowup(c);
+          return c.status === this.filter;
+        })
+        .filter(c => !tag || (c.tags || []).includes(tag))
+        .filter(c => this.matchesSearch(c, q))
         .sort((a,b) => b.updated - a.updated);
+    },
+
+    customersByStatus(s) {
+      const q = this.search.toLowerCase().trim();
+      const tag = this.tagFilter;
+      return this.activeCustomers
+        .filter(c => c.status === s)
+        .filter(c => !tag || (c.tags || []).includes(tag))
+        .filter(c => this.matchesSearch(c, q))
+        .sort((a,b) => b.updated - a.updated);
+    },
+
+    onDragStart(c, ev) {
+      this.draggingId = c.id;
+      ev.dataTransfer.effectAllowed = 'move';
+    },
+    onDragOver(ev) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; },
+    onDrop(status) {
+      const id = this.draggingId;
+      this.draggingId = null;
+      if (!id) return;
+      const i = this.customers.findIndex(c => c.id === id);
+      if (i < 0 || this.customers[i].status === status) return;
+      const oldStatus = this.customers[i].status;
+      this.customers[i] = {
+        ...this.customers[i],
+        status,
+        updated: Date.now(),
+        activity: [
+          ...(this.customers[i].activity || []),
+          { ts: Date.now(), type: 'status', text: 'Status: ' + this.statusLabel(oldStatus) + ' → ' + this.statusLabel(status) }
+        ],
+      };
+      this.saveCustomer(this.customers[i]);
+    },
+
+    addNote() {
+      if (!this.newNote.trim() || !this.editing) return;
+      this.editing.activity = [
+        ...(this.editing.activity || []),
+        { ts: Date.now(), type: 'note', text: this.newNote.trim() }
+      ];
+      this.newNote = '';
+    },
+    removeActivity(i) {
+      if (!this.editing.activity) return;
+      this.editing.activity.splice(i, 1);
+    },
+
+    addTag() {
+      const t = (this.newTag || '').trim().toLowerCase();
+      if (!t) return;
+      this.editing.tags = this.editing.tags || [];
+      if (!this.editing.tags.includes(t)) this.editing.tags.push(t);
+      this.newTag = '';
+    },
+    removeTag(t) {
+      if (!this.editing.tags) return;
+      this.editing.tags = this.editing.tags.filter(x => x !== t);
+    },
+
+    formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return d.toLocaleDateString('no-NO', { day: '2-digit', month: 'short' })
+        + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    },
+
+    telLink(phone) {
+      if (!phone) return '';
+      return 'tel:' + phone.replace(/[^\d+]/g, '');
     },
 
     statusLabel(s) { return (this.statusOptions.find(o => o.value === s) || {}).label || s; },
@@ -389,6 +516,8 @@ window.crm = function crm() {
         let mapped = list
           .filter(e => !e.slettedato && !e.konkurs && !e.underAvvikling && !e.underTvangsavviklingEllerTvangsopplosning);
         funnel.afterStatus = mapped.length;
+        mapped = mapped.filter(e => !existing.has(e.organisasjonsnummer));
+        funnel.afterExisting = mapped.length;
         mapped = mapped.map(e => {
             const a = e.forretningsadresse || {};
             const adresse = [
@@ -524,21 +653,41 @@ window.crm = function crm() {
     },
 
     openNew() {
-      this.editing = { id: null, name: '', company: '', phone: '', email: '', status: 'lead', value: 0, nextContact: '', notes: '', created: null, updated: null };
+      this.editing = { id: null, name: '', company: '', phone: '', email: '', status: 'lead', value: 0, nextContact: '', notes: '', tags: [], activity: [], created: null, updated: null };
+      this.newNote = '';
+      this.newTag = '';
       this.modalOpen = true;
     },
-    openEdit(c) { this.editing = { ...c }; this.modalOpen = true; },
+    openEdit(c) {
+      this.editing = { ...c, tags: [...(c.tags || [])], activity: [...(c.activity || [])] };
+      this.newNote = '';
+      this.newTag = '';
+      this.modalOpen = true;
+    },
     close() { this.modalOpen = false; },
     save() {
       if (!this.editing.name?.trim()) return;
       const now = Date.now();
+      if (this.newNote.trim()) this.addNote();
       if (this.editing.id) {
         const i = this.customers.findIndex(c => c.id === this.editing.id);
-        if (i >= 0) this.customers[i] = { ...this.editing, updated: now };
+        if (i >= 0) {
+          const prev = this.customers[i];
+          if (prev.status !== this.editing.status) {
+            this.editing.activity = [
+              ...(this.editing.activity || []),
+              { ts: now, type: 'status', text: 'Status: ' + this.statusLabel(prev.status) + ' → ' + this.statusLabel(this.editing.status) }
+            ];
+          }
+          this.customers[i] = { ...this.editing, updated: now };
+          this.saveCustomer(this.customers[i]);
+        }
       } else {
-        this.customers.push({ ...this.editing, id: this.uid(), created: now, updated: now });
+        const fresh = { ...this.editing, id: this.uid(), created: now, updated: now,
+          activity: [...(this.editing.activity || []), { ts: now, type: 'system', text: 'Kunde opprettet' }] };
+        this.customers.push(fresh);
+        this.saveCustomer(fresh);
       }
-      this.persist();
       this.close();
     },
     exportText() {
@@ -603,12 +752,42 @@ window.crm = function crm() {
       URL.revokeObjectURL(url);
     },
 
+    setCaller(c, val) {
+      const i = this.customers.findIndex(x => x.id === c.id);
+      if (i < 0) return;
+      const newVal = this.customers[i].caller === val ? '' : val;
+      this.customers[i] = { ...this.customers[i], caller: newVal, updated: Date.now() };
+      this.saveCustomer(this.customers[i]);
+    },
+
+    async quickDelete(c) {
+      const i = this.customers.findIndex(x => x.id === c.id);
+      if (i < 0) return;
+      this.customers[i] = { ...this.customers[i], deletedAt: Date.now(), updated: Date.now() };
+      await this.saveCustomer(this.customers[i]);
+    },
+
     async remove() {
-      if (!confirm('Slette ' + this.editing.name + '?')) return;
       const id = this.editing.id;
-      this.customers = this.customers.filter(c => c.id !== id);
-      await this.deleteCustomer(id);
+      const i = this.customers.findIndex(c => c.id === id);
+      if (i < 0) return this.close();
+      this.customers[i] = { ...this.customers[i], deletedAt: Date.now(), updated: Date.now() };
+      await this.saveCustomer(this.customers[i]);
       this.close();
+    },
+
+    async restoreCustomer(c) {
+      const i = this.customers.findIndex(x => x.id === c.id);
+      if (i < 0) return;
+      const { deletedAt, ...rest } = this.customers[i];
+      this.customers[i] = { ...rest, updated: Date.now() };
+      await this.saveCustomer(this.customers[i]);
+    },
+
+    async purgeCustomer(c) {
+      if (!confirm('Slett ' + (c.name || 'kunde') + ' permanent? Kan ikke angres.')) return;
+      this.customers = this.customers.filter(x => x.id !== c.id);
+      await this.deleteCustomer(c.id);
     },
   };
 }
